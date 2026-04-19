@@ -254,6 +254,10 @@ parse_metadata(const uint8_t *buf, ssize_t len)
 	int field = 0;
 	int off = 6;
 
+	/* Skip leading non-printable bytes before first string */
+	while (off < len && (buf[off] < 0x20 || buf[off] > 0x7e))
+		off++;
+
 	while (off < len && field < 7) {
 		int slen = strnlen((const char *)buf + off, len - off);
 		if (slen > 0)
