@@ -1,0 +1,11 @@
+# /usr/local/etc/airpods.conf - Configuration for the airpods script
+#
+# Required:
+BT_MAC="cc:22:fe:67:67:cf"         # Bluetooth MAC address (bluecontrol scan)
+BT_NAME="airpods"                   # Hostname from /etc/bluetooth/hosts
+
+# Optional (PulseAudio integration):
+PA_SINK="airpods_pro"               # PulseAudio sink name
+PA_SINK_DESC="AirPods_Pro"          # Display name in PulseAudio
+PA_RESTORE_SINK="oss_output.dsp6"   # Speaker sink to restore on disconnect
+OWNER="cl45h"                       # Your username

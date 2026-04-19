@@ -1,0 +1,174 @@
+#!/bin/sh
+# airpods - Connect A2DP Bluetooth headphones on FreeBSD
+# https://github.com/cl45h/freebsd-airpods
+#
+# Usage: sudo airpods [connect|disconnect|status]
+#
+# Configure your device in /usr/local/etc/airpods.conf
+
+CONF="/usr/local/etc/airpods.conf"
+
+# Defaults
+BT_MAC=""
+BT_NAME=""
+VOSS="/usr/local/sbin/virtual_oss"
+PA_SINK="bt_headphones"
+PA_SINK_DESC="Bluetooth_Headphones"
+PA_RESTORE_SINK=""
+OWNER=""
+
+# Load config
+if [ -f "$CONF" ]; then
+    . "$CONF"
+fi
+
+# Auto-detect owner
+if [ -z "$OWNER" ]; then
+    OWNER=$(who | awk '{print $1}' | head -1)
+fi
+
+if [ -z "$BT_MAC" ] || [ -z "$BT_NAME" ]; then
+    cat <<EOF
+Error: BT_MAC and BT_NAME not configured.
+
+Create $CONF with:
+
+  BT_MAC="xx:xx:xx:xx:xx:xx"       # BT MAC (bluecontrol scan)
+  BT_NAME="airpods"                 # hostname from /etc/bluetooth/hosts
+
+Optional:
+  PA_SINK="bt_headphones"           # PulseAudio sink name
+  PA_SINK_DESC="AirPods_Pro"        # PulseAudio display name
+  PA_RESTORE_SINK="oss_output.dsp6" # speaker sink to restore on disconnect
+  OWNER="myuser"                    # your username (for PulseAudio)
+EOF
+    exit 1
+fi
+
+cleanup() {
+    echo "[*] Cleaning up..."
+    pkill -9 virtual_oss 2>/dev/null
+    sleep 1
+
+    if fstat /dev/cuse 2>/dev/null | grep -q virtual_oss; then
+        fstat /dev/cuse 2>/dev/null | grep virtual_oss | awk '{print $3}' | xargs kill -9 2>/dev/null
+        sleep 2
+    fi
+
+    if ! ls /dev/cuse >/dev/null 2>&1; then
+        kldload cuse 2>/dev/null
+        sleep 1
+    fi
+}
+
+load_realtek_fw() {
+    if ! ngctl list 2>/dev/null | grep -q ubt1; then
+        echo "[*] Loading Realtek BT firmware..."
+        UGEN=$(usbconfig list 2>/dev/null | grep "0bda" | head -1 | cut -d: -f1)
+        if [ -z "$UGEN" ]; then
+            echo "[!] Realtek USB BT adapter not found"
+            exit 1
+        fi
+        rtlbtfw -d "$UGEN"
+        if [ $? -ne 0 ]; then
+            echo "[!] Firmware load failed"
+            exit 1
+        fi
+        sleep 2
+    fi
+}
+
+do_connect() {
+    cleanup
+    load_realtek_fw
+
+    service blued status >/dev/null 2>&1 || service blued start
+
+    echo "[*] Scanning..."
+    if ! bluecontrol scan 2>/dev/null | grep -q "$BT_MAC"; then
+        echo "[!] Device not found. Put headphones in pairing mode."
+        exit 1
+    fi
+    echo "[+] Found"
+
+    if ! bluecontrol list_known 2>/dev/null | grep -q "$BT_MAC"; then
+        echo "[*] Pairing..."
+        if ! bluecontrol pair "$BT_MAC"; then
+            echo "[!] Pairing failed"
+            exit 1
+        fi
+    fi
+
+    echo "[*] Connecting BT..."
+    if ! bluecontrol connect "$BT_MAC" 2>&1 | grep -q "connected"; then
+        echo "[!] Connection failed."
+        echo "[!] Try resetting headphones or putting them in pairing mode."
+        exit 1
+    fi
+    echo "[+] BT connected"
+
+    pgrep -q sndiod || sndiod
+    sleep 1
+
+    echo "[*] Starting audio bridge..."
+    nohup $VOSS -C 2 -c 2 -r 44100 -b 16 -s 1024 -a o,-4 \
+        -R /dev/null \
+        -P /dev/bluetooth/$BT_NAME \
+        -d dsp -t vdsp.ctl > /tmp/voss.log 2>&1 &
+
+    sleep 3
+
+    if ! fstat /dev/cuse 2>/dev/null | grep -q virtual_oss; then
+        echo "[!] Audio bridge failed. Check /tmp/voss.log"
+        echo "[!] Try: sudo kldunload cuse && sudo kldload cuse && sudo airpods"
+        exit 1
+    fi
+    echo "[+] Audio streaming"
+
+    # PulseAudio routing
+    if [ -n "$OWNER" ] && pgrep -q pulseaudio; then
+        echo "[*] Routing PulseAudio..."
+        su -l "$OWNER" -c "pactl load-module module-oss device=/dev/dsp sink_name=$PA_SINK sink_properties=device.description=\"$PA_SINK_DESC\"" 2>/dev/null
+        su -l "$OWNER" -c "pactl set-default-sink $PA_SINK" 2>/dev/null
+        su -l "$OWNER" -c "pactl list sink-inputs short" 2>/dev/null | awk '{print $1}' | while read id; do
+            su -l "$OWNER" -c "pactl move-sink-input $id $PA_SINK" 2>/dev/null
+        done
+        echo "[+] PulseAudio -> $PA_SINK_DESC"
+    fi
+
+    echo "[+] Done!"
+}
+
+do_disconnect() {
+    if [ -n "$OWNER" ] && [ -n "$PA_RESTORE_SINK" ] && pgrep -q pulseaudio; then
+        su -l "$OWNER" -c "pactl set-default-sink $PA_RESTORE_SINK" 2>/dev/null
+    fi
+    cleanup
+    bluecontrol disconnect "$BT_MAC" 2>/dev/null
+    echo "[+] Disconnected"
+}
+
+do_status() {
+    echo "=== Bluetooth ==="
+    bluecontrol list_known 2>/dev/null || echo "(none)"
+    echo ""
+    echo "=== Audio ==="
+    if fstat /dev/cuse 2>/dev/null | grep -q virtual_oss; then
+        echo "virtual_oss: streaming"
+    else
+        echo "virtual_oss: not running"
+    fi
+    pgrep -q sndiod && echo "sndiod: running" || echo "sndiod: not running"
+    echo ""
+    if [ -n "$OWNER" ] && pgrep -q pulseaudio; then
+        echo "=== PulseAudio ==="
+        su -l "$OWNER" -c "pactl get-default-sink" 2>/dev/null
+    fi
+}
+
+case "${1:-connect}" in
+    connect)    do_connect ;;
+    disconnect) do_disconnect ;;
+    status)     do_status ;;
+    *)          echo "Usage: sudo airpods [connect|disconnect|status]" ;;
+esac
