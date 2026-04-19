@@ -209,12 +209,54 @@ However, the key is tied to the specific Bluetooth adapter. It will only work on
 3. **`virtual_oss`** creates a virtual audio device (`/dev/dsp`) backed by a Bluetooth A2DP connection — it handles SDP discovery, AVDTP signaling, and SBC encoding
 4. **PulseAudio** routes application audio to the virtual device, making it transparent to browsers and other apps
 
+## airpods-ctl — AirPods control tool
+
+A native C tool to control AirPods features from FreeBSD via the AACP (Apple Accessory Communication Protocol) over L2CAP. Based on the protocol reverse-engineered by [LibrePods](https://github.com/kavishdevar/librepods).
+
+### Build
+
+```sh
+cd /path/to/freebsd-airpods
+make -f Makefile.ctl
+sudo make -f Makefile.ctl install
+```
+
+### Usage
+
+The AirPods must be connected via `bluecontrol` first.
+
+```sh
+# ANC control
+airpods-ctl anc on              # Noise cancellation (isolate external sound)
+airpods-ctl anc off             # No noise control
+airpods-ctl anc transparency    # Hear surroundings
+airpods-ctl anc adaptive        # Adaptive mode
+
+# Conversational Awareness
+airpods-ctl ca on
+airpods-ctl ca off
+
+# Status
+airpods-ctl battery             # Battery levels (left, right, case)
+airpods-ctl ear                 # Ear detection state
+airpods-ctl info                # Device name, model, firmware
+airpods-ctl listen              # Listen for all notifications
+
+# Use a specific device address
+airpods-ctl -d cc:22:fe:67:67:cf battery
+```
+
+### How it works
+
+`airpods-ctl` opens an L2CAP socket to PSM `0x1001` (the AACP control channel, separate from the A2DP audio channel at PSM `0x19`), performs a protocol handshake, and sends/receives control packets. All commands are simple hex byte sequences — no encryption required.
+
 ## Credits
 
 - [blued](https://github.com/niccokunzmann/blued) by JRG Systems — Bluetooth daemon with SSP support for FreeBSD
 - [virtual_oss](https://github.com/hselasky/virtual_oss) by Hans Petter Selasky — virtual audio device with Bluetooth A2DP backend
 - [JRG Systems blog post](https://jrgsystems.com/posts/2022-09-06-blued/) — original guide that made this possible
+- [LibrePods](https://github.com/kavishdevar/librepods) — reverse-engineered AirPods protocol (AACP), used as reference for `airpods-ctl`
 
 ## License
 
-The `airpods` script and `rtlbt.conf` in this repository are released under the BSD 2-Clause License. See individual upstream projects for their licenses.
+The code in this repository is released under the BSD 2-Clause License. See individual upstream projects for their licenses.
