@@ -259,4 +259,4 @@ airpods-ctl -d cc:22:fe:67:67:cf battery
 
 ## License
 
-The code in this repository is released under the BSD 2-Clause License. See individual upstream projects for their licenses.
+The code in this repository is released under the GNU General Public License v3. See individual upstream projects for their licenses.

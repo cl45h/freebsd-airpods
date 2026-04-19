@@ -84,14 +84,15 @@ do_connect() {
 
     service blued status >/dev/null 2>&1 || service blued start
 
-    echo "[*] Scanning..."
-    if ! bluecontrol scan 2>/dev/null | grep -q "$BT_MAC"; then
-        echo "[!] Device not found. Put headphones in pairing mode."
-        exit 1
-    fi
-    echo "[+] Found"
-
-    if ! bluecontrol list_known 2>/dev/null | grep -q "$BT_MAC"; then
+    if bluecontrol list_known 2>/dev/null | grep -q "$BT_MAC"; then
+        echo "[*] Already paired, skipping scan..."
+    else
+        echo "[*] Scanning..."
+        if ! bluecontrol scan 2>&1 | grep -q "$BT_MAC"; then
+            echo "[!] Device not found. Put headphones in pairing mode."
+            exit 1
+        fi
+        echo "[+] Found"
         echo "[*] Pairing..."
         if ! bluecontrol pair "$BT_MAC"; then
             echo "[!] Pairing failed"
@@ -126,14 +127,17 @@ do_connect() {
     echo "[+] Audio streaming"
 
     # PulseAudio routing (null-sink + loopback for software volume control)
-    if [ -n "$OWNER" ] && pgrep -q pulseaudio; then
+    PA_RUNTIME="/var/run/xdg/$OWNER/pulse/native"
+    if [ -n "$OWNER" ] && [ -S "$PA_RUNTIME" ]; then
         echo "[*] Routing PulseAudio..."
-        su -l "$OWNER" -c "pactl load-module module-null-sink sink_name=$PA_SINK sink_properties=device.description=\"$PA_SINK_DESC\"" 2>/dev/null
-        su -l "$OWNER" -c "pactl load-module module-oss device=/dev/dsp sink_name=bt_raw" 2>/dev/null
-        su -l "$OWNER" -c "pactl load-module module-loopback source=${PA_SINK}.monitor sink=bt_raw latency_msec=50" 2>/dev/null
-        su -l "$OWNER" -c "pactl set-default-sink $PA_SINK" 2>/dev/null
-        su -l "$OWNER" -c "pactl list sink-inputs short" 2>/dev/null | awk '{print $1}' | while read id; do
-            su -l "$OWNER" -c "pactl move-sink-input $id $PA_SINK" 2>/dev/null
+        PA="su -m $OWNER -c"
+        export PULSE_SERVER="unix:$PA_RUNTIME"
+        $PA "pactl load-module module-null-sink sink_name=$PA_SINK sink_properties=device.description=\"$PA_SINK_DESC\"" 2>/dev/null
+        $PA "pactl load-module module-oss device=/dev/dsp sink_name=bt_raw" 2>/dev/null
+        $PA "pactl load-module module-loopback source=${PA_SINK}.monitor sink=bt_raw latency_msec=50" 2>/dev/null
+        $PA "pactl set-default-sink $PA_SINK" 2>/dev/null
+        $PA "pactl list sink-inputs short" 2>/dev/null | awk '{print $1}' | while read id; do
+            $PA "pactl move-sink-input $id $PA_SINK" 2>/dev/null
         done
         echo "[+] PulseAudio -> $PA_SINK_DESC (volume control enabled)"
     fi
@@ -142,8 +146,10 @@ do_connect() {
 }
 
 do_disconnect() {
-    if [ -n "$OWNER" ] && [ -n "$PA_RESTORE_SINK" ] && pgrep -q pulseaudio; then
-        su -l "$OWNER" -c "pactl set-default-sink $PA_RESTORE_SINK" 2>/dev/null
+    PA_RUNTIME="/var/run/xdg/$OWNER/pulse/native"
+    if [ -n "$OWNER" ] && [ -n "$PA_RESTORE_SINK" ] && [ -S "$PA_RUNTIME" ]; then
+        export PULSE_SERVER="unix:$PA_RUNTIME"
+        su -m "$OWNER" -c "pactl set-default-sink $PA_RESTORE_SINK" 2>/dev/null
     fi
     cleanup
     bluecontrol disconnect "$BT_MAC" 2>/dev/null
@@ -162,9 +168,11 @@ do_status() {
     fi
     pgrep -q sndiod && echo "sndiod: running" || echo "sndiod: not running"
     echo ""
-    if [ -n "$OWNER" ] && pgrep -q pulseaudio; then
+    PA_RUNTIME="/var/run/xdg/$OWNER/pulse/native"
+    if [ -n "$OWNER" ] && [ -S "$PA_RUNTIME" ]; then
         echo "=== PulseAudio ==="
-        su -l "$OWNER" -c "pactl get-default-sink" 2>/dev/null
+        export PULSE_SERVER="unix:$PA_RUNTIME"
+        su -m "$OWNER" -c "pactl get-default-sink" 2>/dev/null
     fi
 }
 
