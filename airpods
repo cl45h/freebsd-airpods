@@ -111,7 +111,7 @@ do_connect() {
     sleep 1
 
     echo "[*] Starting audio bridge..."
-    nohup $VOSS -C 2 -c 2 -r 44100 -b 16 -s 1024 -a o,-4 \
+    nohup $VOSS -C 2 -c 2 -r 44100 -b 16 -s 1024 \
         -R /dev/null \
         -P /dev/bluetooth/$BT_NAME \
         -d dsp -t vdsp.ctl > /tmp/voss.log 2>&1 &
@@ -125,15 +125,17 @@ do_connect() {
     fi
     echo "[+] Audio streaming"
 
-    # PulseAudio routing
+    # PulseAudio routing (null-sink + loopback for software volume control)
     if [ -n "$OWNER" ] && pgrep -q pulseaudio; then
         echo "[*] Routing PulseAudio..."
-        su -l "$OWNER" -c "pactl load-module module-oss device=/dev/dsp sink_name=$PA_SINK sink_properties=device.description=\"$PA_SINK_DESC\"" 2>/dev/null
+        su -l "$OWNER" -c "pactl load-module module-null-sink sink_name=$PA_SINK sink_properties=device.description=\"$PA_SINK_DESC\"" 2>/dev/null
+        su -l "$OWNER" -c "pactl load-module module-oss device=/dev/dsp sink_name=bt_raw" 2>/dev/null
+        su -l "$OWNER" -c "pactl load-module module-loopback source=${PA_SINK}.monitor sink=bt_raw latency_msec=50" 2>/dev/null
         su -l "$OWNER" -c "pactl set-default-sink $PA_SINK" 2>/dev/null
         su -l "$OWNER" -c "pactl list sink-inputs short" 2>/dev/null | awk '{print $1}' | while read id; do
             su -l "$OWNER" -c "pactl move-sink-input $id $PA_SINK" 2>/dev/null
         done
-        echo "[+] PulseAudio -> $PA_SINK_DESC"
+        echo "[+] PulseAudio -> $PA_SINK_DESC (volume control enabled)"
     fi
 
     echo "[+] Done!"
