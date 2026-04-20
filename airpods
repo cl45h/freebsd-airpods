@@ -143,6 +143,12 @@ do_connect() {
     fi
 
     echo "[+] Done!"
+    echo "[*] Watching connection (auto-disconnect on drop)..."
+    while pgrep -q virtual_oss; do
+        sleep 5
+    done
+    echo "[!] AirPods disconnected, cleaning up..."
+    do_disconnect
 }
 
 do_disconnect() {
@@ -153,6 +159,7 @@ do_disconnect() {
     fi
     cleanup
     bluecontrol disconnect "$BT_MAC" 2>/dev/null
+    service blued stop 2>/dev/null
     echo "[+] Disconnected"
 }
 
